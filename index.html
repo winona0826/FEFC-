@@ -1,0 +1,596 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>智慧電力預測系統 — Weekly Solar w/ Daily Temp & Weather</title>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<!-- SheetJS (XLSX export) -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+<style>
+:root{
+  --bg1:#02102a; --bg2:#041733;
+  --accent:#7fd3ff; --accent2:#7be28a; --muted:#9fbfd6;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;padding:0;font-family:"Noto Sans TC","Microsoft JhengHei",Arial,sans-serif;background:linear-gradient(180deg,var(--bg1),var(--bg2));color:#e6f6ff;font-size:18px}
+.small{font-size:0.98rem;color:var(--muted)}
+
+/* glow background */
+.glow-bg{position:fixed;inset:0;z-index:0;pointer-events:none;background:
+  radial-gradient(ellipse at 20% 20%, rgba(63,193,255,0.04), transparent 12%),
+  radial-gradient(ellipse at 80% 80%, rgba(55,200,180,0.02), transparent 12%);
+  mix-blend-mode: screen;
+}
+.glow-bg::after{content:"";position:absolute;left:-30%;top:10%;width:160%;height:60%;background: linear-gradient(90deg, rgba(79,195,255,0.06), rgba(43,240,209,0.03), rgba(79,195,255,0.06));filter: blur(28px) saturate(120%);transform: translateX(-12%);opacity:0.16;animation:flowX 16s ease-in-out infinite}
+@keyframes flowX{0%{transform:translateX(-12%)}50%{transform:translateX(12%)}100%{transform:translateX(-12%)}}
+
+/* star canvas */
+#starCanvas{position:fixed;inset:0;z-index:1;pointer-events:none}
+
+/* app layout */
+.app{position:relative;z-index:2;max-width:1200px;margin:28px auto;padding:20px}
+header{display:flex;justify-content:space-between;align-items:center;padding:16px;border-radius:14px;background:linear-gradient(90deg, rgba(255,255,255,0.02), rgba(255,255,255,0.008));border:1px solid rgba(255,255,255,0.02)}
+.title{font-size:1.9rem;color:var(--accent);font-weight:900}
+.subtitle{color:var(--muted);font-size:1rem}
+
+/* grid */
+.grid{display:grid;grid-template-columns:1fr 420px;gap:18px;margin-top:18px}
+@media(max-width:1024px){.grid{grid-template-columns:1fr}}
+
+/* card */
+.card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.008));padding:16px;border-radius:14px;border:1px solid rgba(255,255,255,0.02);position:relative;overflow:hidden;box-shadow:0 6px 30px rgba(2,16,42,0.45)}
+.card::after{content:"";position:absolute;left:0;bottom:0;width:100%;height:3px;background:linear-gradient(90deg,#4fc3ff,#2bf0d1,#4fc3ff);opacity:0.15;pointer-events:none}
+h2{margin:0 0 12px 0;color:var(--accent);font-size:1.1rem}
+
+/* forms */
+label{display:block;color:var(--muted);margin-bottom:8px;font-weight:700;font-size:1rem}
+input[type=number], select{width:100%;padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,0.03);background:rgba(255,255,255,0.01);color:#e6f6ff;font-size:1rem}
+.days-container{display:grid;gap:12px}
+.day-card{background:rgba(0,0,0,0.14);padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.02)}
+.day-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.day-title{color:var(--accent);font-weight:900;font-size:1rem}
+.temp-row{display:flex;gap:10px;align-items:center}
+.temp-row input{width:130px}
+
+/* production lines */
+.production-lines-day{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-top:10px}
+.checkbox-wrapper{display:flex;align-items:center;gap:10px;padding:10px;border-radius:10px;background:rgba(255,255,255,0.01);cursor:pointer;border:1px solid rgba(255,255,255,0.02);font-size:0.98rem}
+.checkbox-wrapper input{width:18px;height:18px;accent-color:var(--accent)}
+
+/* weather select */
+.weather-select{width:160px;padding:8px;border-radius:8px;background:rgba(255,255,255,0.01);border:1px solid rgba(255,255,255,0.03);color:#e6f6ff}
+
+/* controls and buttons */
+.controls{display:flex;gap:12px;align-items:center;margin-top:12px;flex-wrap:wrap}
+.btn{background:linear-gradient(90deg,var(--accent),#41b8ff);border:none;padding:12px 16px;border-radius:12px;color:#02102a;font-weight:900;cursor:pointer;font-size:1.05rem;box-shadow:0 8px 28px rgba(79,195,255,0.12);transition:transform .18s,box-shadow .18s}
+.btn.ghost{background:transparent;color:var(--accent);border:1px solid rgba(255,255,255,0.03);box-shadow:none}
+.btn:hover{transform:translateY(-3px);box-shadow:0 18px 48px rgba(79,195,255,0.18)}
+
+/* stats */
+.stat-grid{display:flex;gap:12px;flex-wrap:wrap;margin-top:6px}
+.stat-card{flex:1 1 32%;background:linear-gradient(180deg, rgba(255,255,255,0.01), transparent);padding:14px;border-radius:10px;border:1px solid rgba(255,255,255,0.02);display:flex;flex-direction:column;align-items:flex-start;gap:6px}
+.stat-label{color:var(--muted);font-size:0.95rem}
+.stat-value{font-size:1.45rem;color:var(--accent2);font-weight:900;margin-top:4px}
+
+/* table */
+.table-wrap{margin-top:12px;overflow:auto;border-radius:8px}
+table.results-table{width:100%;border-collapse:collapse;color:#e6f6ff}
+table.results-table th, table.results-table td{padding:10px;border-bottom:1px solid rgba(255,255,255,0.02);text-align:center;font-size:1rem}
+table.results-table th{background:linear-gradient(90deg, rgba(255,255,255,0.02), rgba(255,255,255,0.008));color:var(--accent);font-weight:900}
+.total-row td{font-weight:900;background:linear-gradient(90deg, rgba(255,255,255,0.01), rgba(255,255,255,0.005))}
+
+/* chart */
+.chart-container{margin-top:12px;height:320px;padding:12px;border-radius:10px;background:linear-gradient(180deg, rgba(255,255,255,0.01), transparent)}
+
+/* focus */
+input:focus, select:focus, textarea:focus { outline:none; box-shadow:0 0 20px rgba(79,195,255,0.08); border-color: rgba(127,211,255,0.18) }
+
+/* responsive */
+@media(max-width:720px){ .title{font-size:1.4rem} html,body{font-size:16px} }
+</style>
+</head>
+<body>
+
+<div class="glow-bg" aria-hidden="true"></div>
+<canvas id="starCanvas"></canvas>
+
+<div class="app" role="main">
+  <header>
+    <div>
+      <div class="title">智慧電力預測系統</div>
+      <div class="subtitle"></div>
+    </div>
+    <div style="text-align:right">
+      <div class="small">介面：繁體中文</div>
+      <div style="margin-top:8px;font-weight:800;color:var(--accent);text-align:right; display: none;">
+        MAPE: 2.13% &nbsp; &nbsp; R²: 0.957
+      </div>
+    </div>
+  </header>
+
+  <div class="grid">
+    <!-- LEFT -->
+    <div>
+      <div class="card" style="display: none;">
+        <h2>模型說明</h2>
+        <pre style="font-size:0.95rem;line-height:1.35">
+
+1) 週太陽能基底模型：
+   S_weekly_base = Cmax × (1 − exp(− I_avg / k))
+
+2) 每日單條產線耗電：
+   E_line_i = lineUsage_i × productionMultiplier
+   （productionMultiplier：依實際設備調整的產能係數）
+
+
+
+  
+
+
+
+</pre>
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <h2>未來 7 日：溫度 / 天氣 / 啟用產線</h2>
+        <label>上週平均日照合計（Wh/m²）</label>
+        <input type="number" id="avgSunlight" value="6214.64" step="0.01">
+
+        <div class="days-container" id="daysContainer"></div>
+
+        <div class="controls">
+          <button id="runBtn" class="btn">開始預測</button>
+          <button id="selectAllBtn" class="btn ghost">全部勾選</button>
+          <button id="clearAllBtn" class="btn ghost">全部取消</button>
+        </div>
+      </div>
+
+      <div class="card" id="resultsCard" style="display:none;margin-top:14px">
+        <h2>預測結果</h2>
+        <div class="table-wrap">
+          <table class="results-table" id="resultsTable">
+            <thead>
+              <tr>
+                <th>日期</th><th>溫度（℃）</th><th>天氣</th><th>啟用產線數</th><th>預測耗電（kWh）</th><th>太陽能（kWh）</th><th>台電供給（kWh）</th>
+              </tr>
+            </thead>
+            <tbody id="resultsBody"></tbody>
+            <tfoot id="resultsFoot"></tfoot>
+          </table>
+        </div>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
+          <div class="small">下載本週預測（英文欄位）</div>
+          <div>
+            <button id="downloadCsvBtn" class="btn">Download CSV</button>
+            <button id="downloadXlsxBtn" class="btn ghost">Download XLSX</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" id="diffCard" style="display:none;margin-top:14px">
+        <h2>每日差值（實際 vs 預測）</h2>
+        <div class="table-wrap">
+          <table class="results-table" id="diffTable">
+            <thead>
+              <tr><th>日期</th><th>實際耗電 (輸入)</th><th>預測耗電 (kWh)</th><th>差值 (實際 - 預測)</th></tr>
+            </thead>
+            <tbody id="diffBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card" id="solarChartCard" style="display:none;margin-top:14px">
+        <h2>太陽能（預測 vs 理論最大）</h2>
+        <div class="chart-container"><canvas id="solarChart"></canvas></div>
+      </div>
+
+      <div class="card" id="consumptionChartCard" style="display:none;margin-top:14px">
+        <h2>耗電量 & 台電供給 折線圖</h2>
+        <div class="chart-container"><canvas id="consumptionChart"></canvas></div>
+      </div>
+    </div>
+
+    <!-- RIGHT -->
+    <div>
+      <div class="card">
+        <h2>本週摘要</h2>
+        <div class="stat-grid">
+          <div class="stat-card">
+            <div class="stat-label">總耗電量（含週公用電）</div>
+            <div id="totalUsage" class="stat-value">0</div>
+            <div class="small">kWh</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">總太陽能發電量</div>
+            <div id="totalSolar" class="stat-value">0</div>
+            <div class="small">kWh</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">總台電供給量</div>
+            <div id="totalGrid" class="stat-value">0</div>
+            <div class="small">kWh</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:14px; display: none;">
+        <h2>模型參數</h2>
+        <pre style="font-size:0.95rem;line-height:1.35">
+Cmax: 23500
+k: 3500
+tempSlope: 0.005
+tempRef: 15
+finalMultiplier: 0.95
+
+MAPE: 2.13%
+R²: 0.957
+        </pre>
+      </div>
+    </div>
+  </div>
+
+  <div style="text-align:center;margin-top:18px;color:#9fbfd6">© 2025 Energy Forecast — CLEAN</div>
+</div>
+
+<script>
+/* ----------------- 初始常數 ----------------- */
+const productionLines = ['產線1','產線2','產線3','產線4','產線5','產線6','產線7','產線8','產線9A','產線9B','產線10A','產線10B','產線11A','產線11B','產線12A','產線12B','產線13A','產線13B','產線13C','產線13D','產線14A','產線14B','產線14C','產線14D'];
+const lineUsage = [10884.85,10896.75,8962.10,9799.23,8674.65,8468.83,7542.37,7473.40,9923.80,8714.52,8471.49,8363.67,6567.66,6398.47,9343.09,9897.29,6579.22,6328.14,6279.23,6901.94,0,0,0,9168.89];
+
+let providedDailyUtility = [22622.3,13037.9,20297.5,174.568];
+const defaultTemps = [25,26,24,27,25,26,28];
+const dayNames = ['第1日','第2日','第3日','第4日','第5日','第6日','第7日'];
+
+/* MODEL defaults (tempSlope updated to 0.005) */
+let MODEL = {
+  Cmax: 23500,
+  k: 3500,
+  tempSlope: 0.005,
+  tempRef: 15,
+  lowSunThreshold: 5000,
+  lowSunMultiplier: 0.75,
+  finalMultiplier: 0.95
+};
+
+const productionMultiplier = 1.3;
+
+let dailyPred = [], dailySolar = [], dailyGrid = [];
+let solarChart = null, consumptionChart = null;
+
+/* -----------------Canvas ----------------- */
+(function initStarCanvas(){
+  const canvas = document.getElementById('starCanvas');
+  const ctx = canvas.getContext('2d');
+  let w = canvas.width = window.innerWidth;
+  let h = canvas.height = window.innerHeight;
+  function rand(a,b){ return Math.random()*(b-a)+a; }
+  let stars = [];
+  function reset(){
+    stars = [];
+    const n = Math.round(Math.max(40, Math.min(120, (w*h)/200000)));
+    for(let i=0;i<n;i++){
+      stars.push({x:Math.random()*w, y:Math.random()*h, r:rand(0.25,1.2), a:rand(0.12,0.9), p:rand(0.0008,0.004), vx:rand(-0.008,0.008), vy:rand(-0.008,0.008)});
+    }
+  }
+  reset();
+  window.addEventListener('resize', ()=>{ w = canvas.width = window.innerWidth; h = canvas.height = window.innerHeight; reset(); });
+
+  let meteors = [];
+  function spawnMeteor(){ if(Math.random() < 0.08){ const sx = Math.random()*w*0.95, sy = Math.random()*h*0.25; meteors.push({x:sx,y:sy,len:rand(200,700),speed:rand(700,1400),angle:rand(20*Math.PI/180,65*Math.PI/180),life:0,ttl:rand(0.8,2.0)}); } }
+
+  let last = performance.now();
+  function step(now){
+    const dt = (now - last)/1000 || 0.016;
+    last = now;
+    ctx.clearRect(0,0,w,h);
+    const grad = ctx.createRadialGradient(w*0.5,h*0.28,20,w*0.5,h*0.28,Math.max(w,h));
+    grad.addColorStop(0,'rgba(120,168,255,0.012)');
+    grad.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle = grad; ctx.fillRect(0,0,w,h);
+
+    for(const s of stars){
+      s.a += Math.sin(now*s.p)*0.0006;
+      s.x += s.vx * dt * 30; s.y += s.vy * dt * 30;
+      if(s.x < -10) s.x = w + 10; if(s.x > w + 10) s.x = -10;
+      if(s.y < -10) s.y = h + 10; if(s.y > h + 10) s.y = -10;
+      const alpha = Math.max(0.04, Math.min(1, s.a));
+      const r = s.r;
+      const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r*6);
+      g.addColorStop(0, `rgba(255,255,255,${0.9*alpha})`);
+      g.addColorStop(0.2, `rgba(255,255,255,${0.35*alpha})`);
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = g; ctx.fillRect(s.x - r*6, s.y - r*6, r*12, r*12);
+    }
+
+    spawnMeteor();
+    for(let i=meteors.length-1;i>=0;i--){
+      const m = meteors[i];
+      m.life += dt;
+      const t = m.life / m.ttl;
+      if(t > 1){ meteors.splice(i,1); continue; }
+      const travel = m.speed * m.life;
+      const tipX = m.x + Math.cos(m.angle) * travel;
+      const tipY = m.y + Math.sin(m.angle) * travel;
+      ctx.save();
+      const lg = ctx.createLinearGradient(m.x,m.y,tipX,tipY);
+      lg.addColorStop(0,'rgba(255,255,255,0)');
+      lg.addColorStop(0.6,'rgba(255,255,255,0.12)');
+      lg.addColorStop(1,'rgba(255,255,255,0.95)');
+      ctx.strokeStyle = lg; ctx.lineWidth = 2.2;
+      ctx.beginPath(); ctx.moveTo(m.x,m.y); ctx.lineTo(tipX,tipY); ctx.stroke();
+      ctx.restore();
+      ctx.beginPath(); ctx.fillStyle = 'rgba(255,255,255,0.95)'; ctx.arc(tipX,tipY,2.2*(1 - t*0.7),0,Math.PI*2); ctx.fill();
+    }
+    requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+})();
+
+/* ----------------- 初始化日輸入區 ----------------- */
+function initDays(){
+  const container = document.getElementById('daysContainer');
+  container.innerHTML = '';
+  for(let d=0; d<7; d++){
+    const card = document.createElement('div'); card.className = 'day-card';
+    card.innerHTML = `
+      <div class="day-header"><div class="day-title">${dayNames[d]}</div><div class="small">溫度 / 天氣 / 啟用產線</div></div>
+      <div class="temp-row"><label style="min-width:86px">溫度（℃）</label><input type="number" id="temp${d}" value="${defaultTemps[d]}" step="0.1"></div>
+      <div style="margin-top:8px"><label>天氣</label>
+        <select id="weather${d}" class="weather-select">
+          <option value="sun">晴天（100%）</option>
+          <option value="light">小雨（25%）</option>
+          <option value="heavy">大雨（10%）</option>
+        </select>
+      </div>
+      <div class="production-lines-day" id="lines${d}"></div>
+    `;
+    container.appendChild(card);
+    const lineWrap = card.querySelector(`#lines${d}`);
+    productionLines.forEach((ln,i)=>{
+      const lbl = document.createElement('label');
+      lbl.className = 'checkbox-wrapper';
+      lbl.innerHTML = `<input type="checkbox" id="day${d}-line${i}"><span>${ln}</span>`;
+      lineWrap.appendChild(lbl);
+    });
+  }
+}
+initDays();
+
+/* 全選 / 清除 */
+document.getElementById('selectAllBtn').addEventListener('click', ()=> document.querySelectorAll('.production-lines-day input').forEach(cb=>cb.checked=true));
+document.getElementById('clearAllBtn').addEventListener('click', ()=> document.querySelectorAll('.production-lines-day input').forEach(cb=>cb.checked=false));
+
+/* ----------------- 太陽能核心函式 ----------------- */
+function predictSolarBase(effectiveSun, temp, params = MODEL){
+  const Cmax = params.Cmax;
+  const k = params.k;
+  let tempFactor = 1 - params.tempSlope * (temp - params.tempRef);
+  if(tempFactor < 0.3) tempFactor = 0.3;
+
+  let energy = Cmax * (1 - Math.exp(- effectiveSun / k));
+  if(effectiveSun < params.lowSunThreshold) energy *= params.lowSunMultiplier;
+
+  energy *= tempFactor;
+  energy *= params.finalMultiplier;
+
+  return Math.max(0, energy);
+}
+
+/* rain multiplier lookup  */
+function rainFactor(key){
+  if(key === 'sun') return 1.0;
+  if(key === 'light') return 0.25;
+  if(key === 'heavy') return 0.10;
+  return 1.0;
+}
+
+/* ----------------- 預測主流程 ----------------- */
+document.getElementById('runBtn').addEventListener('click', runPrediction);
+
+function runPrediction(){
+  const avgSun = Number(document.getElementById('avgSunlight').value) || 0;
+  if(avgSun <= 0){ alert('請輸入有效的三期上週平均日照合計'); return; }
+
+  // weekly utility (sum provided)
+  const weeklyUtility = providedDailyUtility.reduce((a,b)=>a+b,0);
+
+  // daily production base (per-day sum of selected lines * multiplier)
+  const dailyProductionArr = [];
+  for(let d=0; d<7; d++){
+    let production = 0;
+    productionLines.forEach((_,i)=>{
+      const cb = document.getElementById(`day${d}-line${i}`);
+      if(cb && cb.checked) production += lineUsage[i] * productionMultiplier;
+    });
+    dailyProductionArr.push(production);
+  }
+
+  const weeklyProductionNoUtility = dailyProductionArr.reduce((a,b)=>a+b,0);
+
+  // average temp for weekly base
+  let avgTemp = 0;
+  for(let d=0; d<7; d++) avgTemp += (Number(document.getElementById(`temp${d}`).value) || 0);
+  avgTemp = avgTemp / 7;
+
+  // weeklySolarRaw using original weekly formula (preserve)
+  let weeklySolarRaw = predictSolarBase(avgSun, avgTemp, MODEL);
+
+  // KEEP cap (0.85)
+  const solarCap = weeklyProductionNoUtility > 0 ? weeklyProductionNoUtility * 0.85 : weeklySolarRaw;
+  if(weeklySolarRaw > solarCap) weeklySolarRaw = solarCap;
+
+  // distribute weeklySolarRaw to days using production * tempFactor weighting
+  const rawWeights = [];
+  for(let d=0; d<7; d++){
+    const T = Number(document.getElementById(`temp${d}`).value) || 0;
+    let tempFactorDay = 1 - MODEL.tempSlope * (T - MODEL.tempRef);
+    if(tempFactorDay < 0.3) tempFactorDay = 0.3;
+    const rawW = dailyProductionArr[d] * tempFactorDay;
+    rawWeights.push(rawW);
+  }
+  const sumRaw = rawWeights.reduce((a,b)=>a+b,0) || 1;
+
+  // initial daily solar (before daily weather)
+  let dailySolarArr = rawWeights.map(rw => (weeklySolarRaw * (rw / sumRaw)));
+
+  // now apply daily weather multiplier (each day independently)
+  dailySolarArr = dailySolarArr.map((val,d) => {
+    const wk = document.getElementById(`weather${d}`).value;
+    const wf = rainFactor(wk);
+    return Number((val * wf).toFixed(2));
+  });
+
+  // compute grid per day
+  const dailyGridArr = dailyProductionArr.map((prod,d) => Number(Math.max(0, prod - dailySolarArr[d]).toFixed(2)));
+
+  // populate global arrays for charts & diff table
+  dailyPred = dailyProductionArr.map(v => Number(v.toFixed(2)));
+  dailySolar = dailySolarArr.slice();
+  dailyGrid = dailyGridArr.slice();
+
+  // render table
+  renderResults(weeklyUtility);
+
+  // render diff input table
+  renderDiffInput();
+
+  // draw charts
+  drawSolarChart();
+  drawConsumptionChart();
+
+  // show cards
+  document.getElementById('resultsCard').style.display = 'block';
+  document.getElementById('diffCard').style.display = 'block';
+  document.getElementById('solarChartCard').style.display = 'block';
+  document.getElementById('consumptionChartCard').style.display = 'block';
+}
+
+/* ----------------- render results ----------------- */
+function renderResults(weeklyUtility){
+  const tbody = document.getElementById('resultsBody'); tbody.innerHTML = '';
+  for(let d=0; d<7; d++){
+    const T = Number(document.getElementById(`temp${d}`).value) || 0;
+    const weatherKey = document.getElementById(`weather${d}`).value;
+    const weatherLabel = weatherKey === 'sun' ? '晴天' : (weatherKey === 'light' ? '小雨' : '大雨');
+    const activeCount = productionLines.filter((_,i)=>document.getElementById(`day${d}-line${i}`).checked).length;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>Day ${d+1}</td><td>${T.toFixed(1)}</td><td>${weatherLabel}</td><td>${activeCount}</td><td>${dailyPred[d].toFixed(2)}</td><td>${dailySolar[d].toFixed(2)}</td><td>${dailyGrid[d].toFixed(2)}</td>`;
+    tbody.appendChild(tr);
+  }
+
+  const totalSolar = dailySolar.reduce((a,b)=>a+b,0);
+  const totalGrid = dailyGrid.reduce((a,b)=>a+b,0) + weeklyUtility;
+  const weeklyProduction = dailyPred.reduce((a,b)=>a+b,0);
+
+  document.getElementById('resultsFoot').innerHTML = `
+    <tr class="total-row">
+      <td><strong>週總計</strong></td><td>-</td><td>-</td><td>-</td>
+      <td><strong>${weeklyProduction.toFixed(2)}</strong></td>
+      <td><strong>${totalSolar.toFixed(2)}</strong></td>
+      <td><strong>${totalGrid.toFixed(2)}</strong></td>
+    </tr>
+  `;
+
+  document.getElementById('totalUsage').textContent = (weeklyProduction + providedDailyUtility.reduce((a,b)=>a+b,0)).toFixed(2);
+  document.getElementById('totalSolar').textContent = totalSolar.toFixed(2);
+  document.getElementById('totalGrid').textContent = totalGrid.toFixed(2);
+}
+
+/* ----------------- daily diff input & auto calc ----------------- */
+function renderDiffInput(){
+  const body = document.getElementById('diffBody'); body.innerHTML = '';
+  for(let d=0; d<7; d++){
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>Day ${d+1}</td><td><input type="number" id="real${d}" placeholder="輸入實際耗電"></td><td>${dailyPred[d].toFixed(2)}</td><td id="diff${d}">-</td>`;
+    body.appendChild(tr);
+  }
+  for(let d=0; d<7; d++){
+    const inp = document.getElementById(`real${d}`);
+    inp.addEventListener('input', ()=>{ const real = Number(inp.value) || 0; const diff = real - dailyPred[d]; document.getElementById(`diff${d}`).textContent = diff.toFixed(2); });
+  }
+}
+
+/* ----------------- solar chart ----------------- */
+function predictSolarMax(temp){
+  let tempFactor = 1 - MODEL.tempSlope * (temp - MODEL.tempRef);
+  if(tempFactor < 0.3) tempFactor = 0.3;
+  return MODEL.Cmax * tempFactor * MODEL.finalMultiplier;
+}
+
+function drawSolarChart(){
+  const ctx = document.getElementById('solarChart').getContext('2d');
+  if(solarChart) solarChart.destroy();
+  const solarMaxArr = [];
+  for(let d=0; d<7; d++){ const t = Number(document.getElementById(`temp${d}`).value) || 0; solarMaxArr.push(Number(predictSolarMax(t).toFixed(2))); }
+  solarChart = new Chart(ctx, {
+    type:'line',
+    data:{ labels:['Day1','Day2','Day3','Day4','Day5','Day6','Day7'],
+      datasets:[
+        { label:'預測太陽能 (kWh)', data: dailySolar, borderColor:'#34d399', backgroundColor:'rgba(52,211,153,0.08)', tension:0.28, fill:true, pointRadius:5 },
+        { label:'理論最大 (kWh)', data: solarMaxArr, borderColor:'#9ca3af', backgroundColor:'rgba(156,163,175,0.03)', fill:false, tension:0.28, borderDash:[6,6], pointRadius:0 }
+      ]
+    },
+    options:{
+      responsive:true,
+      plugins:{ legend:{ labels:{ color:'#e6f6ff', font:{ weight:700 } } } },
+      scales:{ x:{ ticks:{ color:'#cfeeff' }, grid:{ color:'rgba(255,255,255,0.02)' } }, y:{ ticks:{ color:'#cfeeff' }, grid:{ color:'rgba(255,255,255,0.02)' } } }
+    }
+  });
+}
+
+/* ----------------- consumption & grid chart ----------------- */
+function drawConsumptionChart(){
+  const ctx = document.getElementById('consumptionChart').getContext('2d');
+  if(consumptionChart) consumptionChart.destroy();
+  consumptionChart = new Chart(ctx, {
+    type:'line',
+    data:{
+      labels:['Day1','Day2','Day3','Day4','Day5','Day6','Day7'],
+      datasets:[
+        { label:'預測耗電量 (kWh)', data: dailyPred.map(v=>Number(v.toFixed(2))), borderColor:'#ffd166', backgroundColor:'rgba(255,209,102,0.06)', tension:0.25, fill:true, pointRadius:4 },
+        { label:'台電供給 (kWh)', data: dailyGrid.map(v=>Number(v.toFixed(2))), borderColor:'#60a5fa', backgroundColor:'rgba(96,165,250,0.06)', tension:0.25, fill:true, pointRadius:4 }
+      ]
+    },
+    options:{
+      responsive:true,
+      plugins:{ legend:{ labels:{ color:'#e6f6ff', font:{ weight:700 } } } },
+      scales:{ x:{ ticks:{ color:'#cfeeff' }, grid:{ color:'rgba(255,255,255,0.02)' } }, y:{ ticks:{ color:'#cfeeff' }, grid:{ color:'rgba(255,255,255,0.02)' } } }
+    }
+  });
+}
+
+/* ----------------- CSV / XLSX 下載 ----------------- */
+document.getElementById('downloadCsvBtn').addEventListener('click', downloadCSV);
+document.getElementById('downloadXlsxBtn').addEventListener('click', downloadXLSX);
+
+function downloadCSV(){
+  const rows = [];
+  rows.push(['Date','Temperature_C','Weather','Active_Lines','Predicted_Consumption_kWh','Solar_kWh','Grid_kWh']);
+  const trs = document.querySelectorAll('#resultsBody tr');
+  trs.forEach((tr, idx)=>{ const cols = Array.from(tr.children).map(td=>td.textContent.replace('%','')); rows.push([`Day${idx+1}`, parseFloat(cols[1])||0, cols[2]||'', parseInt(cols[3])||0, parseFloat(cols[4])||0, parseFloat(cols[5])||0, parseFloat(cols[6])||0]); });
+  rows.push([]); rows.push(['Weekly_Total','-','-', '-', Number(document.getElementById('totalUsage').textContent||0), Number(document.getElementById('totalSolar').textContent||0), Number(document.getElementById('totalGrid').textContent||0)]);
+  const csv = rows.map(r => r.map(c => (typeof c === 'string' && c.includes(',')) ? `"${c}"` : c).join(',')).join('\n');
+  const blob = new Blob([csv], {type: 'text/csv;charset=utf-8;'}); const url = URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='energy_forecast_weekly.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+}
+
+function downloadXLSX(){
+  const rows = []; rows.push(['Date','Temperature_C','Weather','Active_Lines','Predicted_Consumption_kWh','Solar_kWh','Grid_kWh']);
+  const trs = document.querySelectorAll('#resultsBody tr');
+  trs.forEach((tr, idx)=>{ const cols = Array.from(tr.children).map(td=>td.textContent.replace('%','')); rows.push([`Day${idx+1}`, parseFloat(cols[1])||0, cols[2]||'', parseInt(cols[3])||0, parseFloat(cols[4])||0, parseFloat(cols[5])||0, parseFloat(cols[6])||0]); });
+  rows.push([]); rows.push(['Weekly_Total','-','-', '-', Number(document.getElementById('totalUsage').textContent||0), Number(document.getElementById('totalSolar').textContent||0), Number(document.getElementById('totalGrid').textContent||0)]);
+  const ws = XLSX.utils.aoa_to_sheet(rows); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Forecast'); const wbout = XLSX.write(wb, {bookType:'xlsx', type:'array'}); const blob = new Blob([wbout], {type:'application/octet-stream'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='energy_forecast_weekly.xlsx'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(a.href);
+}
+
+/* ----------------- DEFAULT INIT ----------------- */
+window.addEventListener('load', ()=>{
+  for(let i=0;i<3;i++){ const cb = document.getElementById(`day0-line${i}`); if(cb) cb.checked = true; }
+});
+</script>
+
+</body>
+</html>
